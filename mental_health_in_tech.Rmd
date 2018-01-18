@@ -1,0 +1,317 @@
+---
+title: "Metal Health in Tech Work Place"
+author: "Aditi"
+date: "1/5/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Executive Summary**
+
+This [mental health in tech workplace dataset](https://www.kaggle.com/osmi/mental-health-in-tech-survey/data) is downloaded from Kaggle, which is a survey in 2014 with 27 variables and 1259 observations, focusing on mental health and disorders in tech workplace. Main question I'm asking is what factors contribute the most to accept treatment for mental disorders. 
+
+
+```{r preparation, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(Amelia) # plot missing values
+library(vcd) # chi-square test
+library(xtable) # chi-square test
+library(stargazer) # format model output
+library(knitr) # create nice table
+library(rgdal) # plotting worldmap
+library(dotCall64) # plotting worldmap
+library(rworldmap) # plotting worldmap
+library(pscl) # McFadden R^2, assess the model fit
+library(caret) # confusion matrix
+library(e1071) # confusion matrix
+library(ROCR) # plot the ROC curve
+
+# data import
+mental_tech <- read_csv("~/Desktop/Aditi_final/mental_survey.csv")
+
+```
+
+
+## **Description and Exploratory Data Analysis**
+ 
+
+### All the variables of the survey  
+[click here for source](https://www.kaggle.com/osmi/mental-health-in-tech-survey)  
+
+ * **Timestampe** 
+ * **Age**
+ * **Gender**
+ * **Country**
+ * **state**: If you live in the United States, which state or territory do you live in?
+ * **self_employed**:  Are you self-employed?
+ * **family_history**: Do you have a family history of mental illness?
+ * **treatment**: Have you sought treatment for a mental health condition?
+ * **work_interfere**: If you have a mental health condition, do you feel that it interferes with your work?
+ * **no_employees**: How many employees does your company or organization have?
+ * **remote_work**: Do you work remotely (outside of an office) at least 50% of the time?
+ * **tech_company**: Is your employer primarily a tech company/organization?
+ * **benefits**: Does your employer provide mental health benefits?
+ * **care_options**: Do you know the options for mental health care your employer provides?
+ * **wellness_program**: Has your employer ever discussed mental health as part of an employee wellness program?
+ * **seek_help**: Does your employer provide resources to learn more about mental health issues and how to seek help?
+ * **anonymity**: Is your anonymity protected if you choose to take advantage of mental health or substance abuse treatment resources?
+ * **leave**: How easy is it for you to take medical leave for a mental health condition?
+ * **mental_health_consequence**: Do you think that discussing a mental health issue with your employer would have negative consequences?
+ * **phys_health_consequence**: Do you think that discussing a physical health issue with your employer would have negative consequences?
+ * **coworkers**: Would you be willing to discuss a mental health issue with your coworkers?
+ * **supervisor**: Would you be willing to discuss a mental health issue with your direct supervisor(s)?
+ * **mental_health_interview**: Would you bring up a mental health issue with a potential employer in an interview?
+ * **phys_health_interview**: Would you bring up a physical health issue with a potential employer in an interview?
+ * **mental_vs_physical**: Do you feel that your employer takes mental health as seriously as physical health?
+ * **obs_consequence**: Have you heard of or observed negative consequences for coworkers with mental health conditions in your workplace?
+ * **comments**: Any additional notes or comments
+
+### Exploratory data analysis  
+Using data visualization to explore four questions. (1) How does accepting treatment or not differ by employees size? (2) How does accepting treatment or not differ by company types? (3) How does help seeking differ by gender? (4) How does accepting treatment vary across the world? Check the plots below.
+
+```{r exploratory data analysis, echo=FALSE}
+
+## Q1 - how does accepting treatment or not differ by employees size?
+  # recode interested variables
+mental_new <- mental_tech %>% 
+  mutate(employees_size = factor(no_employees, levels = c("1-5", "6-25", "26-100", "100-500", "500-1000", "More than 1000")),
+        treatment_or_not = if_else(treatment %in% c("Yes"), 1L, 0L)
+  )
+
+  # bar plot
+mental_new %>% 
+    ggplot() +
+    aes(x = employees_size, fill = treatment) +
+    geom_bar() +
+    scale_fill_brewer(palette = "Blues") +
+    labs(title = "Treatment differences in employee size", x ="Employee size", y = "Number of cases") +
+    scale_x_discrete(labels = c("1" = "1-5", "2" = "6-25", "3" = "26-100", "4"="100-500", "5"="500-1000", "6"="More than 1000"))
+
+## Q2 - how does accepting treatment differ by company types (tech vs. non-tech) ?
+mental_new %>%
+  ggplot() +
+  aes(x = tech_company, fill = treatment) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Blues") +
+  labs(title = "Treatments differences in tech company vs. non-tech company", x = "company type", y = "Number of cases") +
+  scale_x_discrete(labels = c("No" = "non-tech company", "Yes" = "tech company"))
+
+## Q3 - how does help seeking differ by gender ?
+
+gen <- distinct(mental_new, Gender) # Urrr, 47 types?! people...
+
+# recode variables
+mental_gen <- mental_tech %>% 
+  mutate(gender = case_when(
+         Gender %in% c("Female", "female", "F", "f", "Cis Female", "Woman", "woman","Femake", "cis-female/femme", "femail", "Female (cis)") ~ "female",
+         Gender %in% c("male", "Male", "M", "m", "maile", "something kinda male?", "Cis Male","Mal", "Male (CIS)", "Make", "Guy (-ish) ^_^", "Man", "msle", "Mail", "cis male", "Malr", "Cis Man", "ostensibly male, unsure what that really means") ~ "male",
+         Gender %in% c("Trans-female", "queer/she/they", "non-binary", "Nah", "All", "fluid", "Genderqueer", "Androgyne", "Agender", "male leaning androgynous", "Trans woman", "Neuter", "Female (trans)", "queer", "") ~ "somewhere in between"
+         )
+  )
+
+  # plotting
+mental_gen %>% 
+  count(seek_help, gender) %>%  
+  ggplot() +
+  aes(x = gender, y = seek_help) +
+  geom_tile(mapping = aes(fill = n)) + # visualize the frequency of cases as color density
+  labs(title = "Help seeking differences in different gender", x ="gender", y = "help seeking")
+
+## Q4 - frequency of mental health showed by countries
+
+temp <- mental_tech %>% 
+  select(Country, treatment) %>% 
+  group_by(Country, treatment) %>% 
+  count() %>% 
+  filter(treatment == "Yes")
+
+d <- data.frame(country=temp$Country, value=temp$n)
+
+n <- joinCountryData2Map(d, joinCode = "NAME", nameJoinColum = "country")
+
+mapCountryData(n, nameColumnToPlot="value", mapTitle="Cases of Accepting Treatment Showed by Countries" ,catMethod="categorical", colourPalette=c('red','blue'),missingCountryCol="grey", aspect =0)
+
+
+```
+
+### Missing Data Checking  
+
+Two ways to show missing values, the actual number of cases and visualization.
+According to the output, `comments`, `state` and `work_interfere` have the most frequent missing datapoints. Hence, they won't enter later regression analysis. 
+
+```{r missing data checking, echo=FALSE}
+
+# Output the number of missing values for each column
+mental_tech %>% 
+  sapply(.,function(x) sum(is.na(x)))
+
+# A visual way to highlight missing data
+missmap(mental_tech, main = "Missing values vs observed") 
+
+```
+
+## **Hypotheses and Statistical Analysis**
+
+### Correlation Analysis
+
+* **Hypothesis 1**:   
+    + H0: Whether accepting `treatment` is independent of `family history`.
+    + H1: Whether accepting `treatment` is associated with `family history`.
+
+* **Result 1**:  
+With P-value < .01, we can reject the null hypothesis in favor of the alternative hypothesis. In other words, there is no statistically significant differences between `treatment` and `family history`.
+
+```{r Chi-square test, echo=FALSE}
+
+tab <- xtabs(~ treatment + family_history, data = mental_new) # contingency table
+summary(assocstats(tab)) # p-value + effect size (Cramer's V - strength of association)
+
+```
+
+* **Hypothesis 2**:   
+    + H0: Whether accepting `treatment` is independent of `benefits`.
+    + H1: Whether accepting `treatment` is associated with `benefits`.
+
+* **Result 2**:  
+With P-value < .01, we can reject the null hypothesis. That is to say, there is some association between `treatment` and `benefits`.  
+
+
+```{r Chi-square test 2, echo=FALSE}
+
+tab1 <- xtabs(~ treatment + benefits, data = mental_new) 
+summary(assocstats(tab1))
+
+```
+
+
+### Logistic Regression   
+
+#### Model Fitting and Model Reduction 
+
+```{r logistic regression, echo=FALSE, results = "asis"}
+
+# recode varaibles
+mental_log <- mental_tech %>% 
+  mutate(employees_size = factor(no_employees, levels = c("1-5", "6-25", "26-100", "100-500", "500-1000", "More than 1000")),
+        treatment_or_not = if_else(treatment %in% c("Yes"), 1L, 0L),
+        gender = case_when(
+         Gender %in% c("Female", "female", "F", "f", "Cis Female", "Woman", "woman","Femake", "cis-female/femme", "femail", "Female (cis)") ~ "female",
+         Gender %in% c("male", "Male", "M", "m", "maile", "something kinda male?", "Cis Male","Mal", "Male (CIS)", "Make", "Guy (-ish) ^_^", "Man", "msle", "Mail", "cis male", "Malr", "Cis Man", "ostensibly male, unsure what that really means") ~ "male",
+         Gender %in% c("Trans-female", "queer/she/they", "non-binary", "Nah", "All", "fluid", "Genderqueer", "Androgyne", "Agender", "male leaning androgynous", "Trans woman", "Neuter", "Female (trans)", "queer", "") ~ "somewhere in between"
+         )
+  ) %>% 
+  # subsetting data
+  subset(., select = c("treatment_or_not", "gender", "family_history", "benefits", "remote_work", "care_options", "wellness_program", "seek_help","anonymity", "leave", "mental_health_consequence", "coworkers", "supervisor"))
+
+# split data into two chunks: train for model fitting, test for tesing
+train <- mental_log[1:630, ]
+test <- mental_log[630:1259, ] 
+
+# Model fitting
+model <- glm(treatment_or_not ~., family = binomial(link = "logit"), data = train)
+
+# Model Reduction, eliminate insignificant terms, one at a time (-anoymity, -seek_help, -wellness_program, -remote_work, -supervisor,  -coworkers)
+new_model <- glm(treatment_or_not ~ gender + family_history + benefits + care_options + leave + mental_health_consequence, family = binomial(link = "logit"), data = train)
+
+stargazer(new_model, type = "html", title = "Regression Results")
+
+
+```
+
+
+
+At first, all interested variables entered logistic regression, results showed that `Gender-male`(p<.01), `family_history-Yes`(p<.001), `benefits-Yes`(p<.05), `care_options-Yes`(p<.001), `leaveSomewhat difficult`(p<.01), `mental_health_consequence-No`(p<.05) and `coworkers-Yes`(p<.05) are statistically significant associated with whether accepting `treatment` or not. After **Model Reduction**, `gender-male`(p<.01), `family_history-Yes`(p<.001), `benefits-Yes`(p<.05), `care_options-Yes`(p<.001), `leaveSomewhat difficult`(p<.001), `mental_health_consequence-No`(p<.05) remained statistically significant.   
+
+
+#### Odds Ratios and Confidence Intervals  
+
+
+
+```{r odds ratios and CI, echo=FALSE}
+
+# Odds ratios and 95% confidence intervals
+or_ci <- exp(cbind(OR = coef(new_model), confint(new_model)))
+kable(or_ci)
+
+```
+
+
+`family_history-Yes`, `benefits-Yes`, `care_option-Yes`, `leave` and `mental_health_consequence-Yes` are more likely to accept treatment (Odds ratios are greater than 1).     
+
+
+### Goodness of Fit 
+
+```{r analysis of deviance, echo = FALSE}
+
+anova_model <- anova(new_model, test = "Chisq")
+kable(anova_model)
+
+# McFadden R^2 index can be used to assess the model fit of logit model, since no exact equivalent to the R^2 of linear regression exists
+
+pR2(new_model) # 'pseudo R2' value
+
+```
+Analyzing the table of deviance, adding `gender`, `family_history`, `benefits`, `care_options` and `leave` significntly reduces the residual deviance, and the other variables seem to improve the model less (with larger p-value). McFadden R^2 (0.239) is between 0.2-0.4, which represent an excellent model fit.   
+
+
+### Predictive Ability of the Model    
+
+
+```{r predicitive ability of the model, echo=FALSE}
+
+# Measure the predictive ability of the model
+
+# If prob > 0.5 then 1, else 0. Threshold can be set for better results
+fitted.results <- predict(new_model, test, type='response')
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+
+misClasificError <- mean(fitted.results != test$treatment_or_not, na.rm = T)
+print(paste('Accuracy',1-misClasificError))
+
+
+# Confusion matrix
+
+Con_mat <- confusionMatrix(data=fitted.results, reference=test$treatment_or_not)
+
+
+
+```
+
+The 0.66 accuracy on the test set is a moderate result.   
+
+
+### ROC curve and AUC
+
+ROC curve and AUC (area under the curve) are perfromance measurements for a binary classifier. The ROC is a curve generated by plotting the true positive rate (TPR) against the false positive rate (FPR) at various threshold settings. AUC closer to 1 than to 0.5 indicates a model with good predictive ability. According to plot, our model has good predictive ability. 
+
+```{r ROC & AUC plot, echo=FALSE}
+
+# ROC and AUC (area under the curve)
+
+p <-  predict(model, test, type='response')
+pr <- prediction(p, test$treatment_or_not)
+
+# TPR = sensitivity, FPR=specificity
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+
+```
+
+
+
+## **Conclusion**  
+
+1. **EDA plots**: (1) this mental health survey in tech workplace mainly focuses on United States, Canada and UK; (2) help seeking behaviour seems to be varied among 3 different genders (male, femal, and somewhere in between).  
+
+2. **Correlation analysis**: accepting treatment or not is significantly associated with family history and benefits.  
+
+3. **Logistic regression**: gender, family history, benefits, care_option, leave and mental health consequence are       significant predictors. Employees who are having family history of mental illness, providing mental health        benefits and care options by employer, and knowing negative consequences of discussing a mental health issue      with employer are more likely to accept treatment. Interestingly and oddly, compared to easy to take medical      leave for mental health condition, more difficult to leave seems to increase the probability to accept treatment. 
+
